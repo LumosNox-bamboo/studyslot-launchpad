@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>StudySlot · Research team scheduling</title>
+<meta name="description" content="Find a meeting time that fits a research team's local working hours.">
+<link rel="stylesheet" href="styles.css">
+<script type="module" src="app.mjs"></script>
+<body>
+  <header><a href="./">StudySlot</a><span>Research team scheduling</span></header>
+  <main>
+    <section class="intro">
+      <h1>Find a time that<br> works for everyone.</h1>
+      <p>Compare local working hours across time zones and download a calendar invite for the time you choose.</p>
+    </section>
+    <div class="workspace">
+      <form id="planner">
+        <h2>Meeting setup</h2>
+        <div class="meeting">
+          <label>Meeting date<input type="date" name="date" required><small>In the first participant’s time zone</small></label>
+          <label>Duration<select name="duration"><option value="15">15 min</option><option selected value="30">30 min</option><option value="45">45 min</option><option value="60">60 min</option><option value="90">90 min</option></select></label>
+        </div>
+        <div id="participants"></div>
+        <div class="controls"><button type="button" class="secondary" id="add">Add time zone</button><button type="submit">Find meeting times</button></div>
+        <p id="error" role="alert" hidden></p>
+      </form>
+      <section class="results" aria-labelledby="results-heading">
+        <h2 id="results-heading">Shared meeting times</h2>
+        <p id="summary" role="status"></p>
+        <div id="slots"></div>
+      </section>
+    </div>
+  </main>
+  <template id="participant">
+    <fieldset>
+      <legend></legend>
+      <div class="participant-fields">
+        <label class="zone">Time zone<select name="zone" required></select></label>
+        <label>From<input name="from" type="time" value="09:00" required></label>
+        <label>Until<input name="until" type="time" value="17:00" required></label>
+        <button class="secondary remove" type="button">Remove</button>
+      </div>
+    </fieldset>
+  </template>
+</body>
+</html>

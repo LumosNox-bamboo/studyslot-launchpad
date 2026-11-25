@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>StudySlot · Research team scheduling</title>
+<meta name="description" content="Find a meeting time that fits a research team's local working hours.">
+<style>
+:root {
+  color: #132249;
+  background: #f4f7ff;
+  font: 16px/1.55 "Avenir Next", "Segoe UI", sans-serif;
+  --blue: #2146b5;
+  --edge: #cfdaef;
+  --muted: #4a5a7a;
+}
+*, *::before, *::after { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; }
+header, main { width: min(72rem, calc(100% - 3rem)); margin-inline: auto; }
+header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem 1rem; padding: 1.4rem 0; border-bottom: 1px solid var(--edge); }
+header a { color: var(--blue); text-decoration: none; font-size: 1.25rem; font-weight: 800; }
+header span, small { color: var(--muted); }
+.intro { padding-block: clamp(2rem, 5vw, 4.5rem) 2rem; }
+h1 { margin: 0; font-weight: 800; font-size: clamp(2.5rem, 7vw, 5.25rem); line-height: 1; letter-spacing: -.065em; }
+.intro p { max-width: 36rem; margin: 1.1rem 0 0; color: var(--muted); font-size: 1.125rem; }
+.workspace { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 1.25rem; align-items: start; padding-bottom: 4rem; }
+form, .results { min-width: 0; background: white; padding: clamp(1.1rem, 3vw, 2rem); border: 1px solid var(--edge); border-radius: 1rem; }
+h2 { margin: 0 0 1rem; font-size: 1.35rem; letter-spacing: -.025em; }
+.meeting { display: grid; grid-template-columns: 1.3fr 1fr; gap: .8rem; margin-bottom: 1.15rem; }
+label { display: block; min-width: 0; font-size: .9rem; font-weight: 700; }
+label small { display: block; margin-top: .3rem; font-size: .875rem; font-weight: 500; }
+input, select { display: block; color: inherit; font: inherit; width: 100%; min-width: 0; height: 2.8rem; margin-top: .3rem; border: 1px solid #aab9d6; background: #fff; border-radius: .4rem; padding-inline: .5rem; }
+fieldset { min-width: 0; margin: .9rem 0; padding: .45rem .75rem .75rem; border: 1px solid var(--edge); border-radius: .5rem; }
+legend { padding-inline: .35rem; color: var(--blue); font-size: .9rem; font-weight: 800; }
+.participant-fields { display: grid; grid-template-columns: minmax(0,1.8fr) 1fr 1fr; gap: .6rem; align-items: end; }
+.controls { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .55rem; margin-top: 1.1rem; }
+button { font: inherit; font-weight: 750; min-height: 2.7rem; padding: .5rem .85rem; color: white; background: var(--blue); border: 1px solid var(--blue); border-radius: .45rem; cursor: pointer; }
+.secondary { background: white; color: var(--blue); }
+.remove { grid-column: 1 / -1; justify-self: start; min-height: 2rem; padding-block: .25rem; font-size: .875rem; }
+button:disabled { opacity: .55; cursor: default; }
+:focus-visible { outline: 3px solid #2c65ec; outline-offset: 3px; }
+#summary { margin: -.4rem 0 .8rem; color: var(--muted); }
+#slots article { border-top: 1px solid var(--edge); padding-block: .75rem; }
+#slots h3 { margin: 0; font-size: 1rem; }
+#slots p { margin: .2rem 0; color: var(--muted); overflow-wrap: anywhere; }
+#slots a { color: var(--blue); text-underline-offset: .2em; font-weight: 700; }
+#error { color: #8c2335; font-weight: 650; }
+@media (max-width: 50rem) {
+  .workspace { grid-template-columns: minmax(0, 1fr); }
+  header, main { width: min(38rem, calc(100% - 2rem)); }
+}
+@media (max-width: 27rem) {
+  .participant-fields { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .zone { grid-column: 1 / -1; }
+  h1 br { display: none; }
+}
+
+</style>
+<script type="module">
+const minute = 60_000;
+const day = 24 * 60 * minute;
+const formatters = new Map();
+
+function localDateTime(timestamp, zone) {
+  if (!formatters.has(zone)) {
+    formatters.set(zone, new Intl.DateTimeFormat('en-GB', {
+      timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZoneName: 'shortOffset',
+    }));
+  }
+  const parts = Object.fromEntries(formatters.get(zone).formatToParts(timestamp).map(({ type, value }) => [type, value]));
+  return { date: `${parts.year}-${parts.month}-${parts.day}`, time: `${parts.hour}:${parts.minute}`, offset: parts.timeZoneName };
+}
+
+function findSlots(date, duration, participants) {
+  const midnight = Date.parse(`${date}T00:00:00Z`);
+  if (!Number.isFinite(midnight) || new Date(midnight).toISOString().slice(0, 10) !== date) throw new Error('Choose a valid date.');
+  if (![15, 30, 45, 60, 90].includes(duration)) throw new Error('Choose a meeting length.');
+  if (participants.length < 2 || participants.some(({ from, until }) => !from || !until || from >= until)) {
+    throw new Error('Enter a start and a later end time for every participant.');
+  }
+
+  const slots = [];
+  for (let start = midnight - day; start < midnight + 2 * day; start += 15 * minute) {
+    if (localDateTime(start, participants[0].zone).date !== date) continue;
+    const fits = participants.every(({ zone, from, until }) => {
+      const first = localDateTime(start, zone);
+      if (first.time < from || first.time >= until) return false;
+      for (let elapsed = 15; elapsed <= duration; elapsed += 15) {
+        const local = localDateTime(start + elapsed * minute, zone);
+        if (local.date !== first.date || local.time < from || local.time > until || (elapsed < duration && local.time === until)) return false;
+      }
+      return true;
+    });
+    if (fits) slots.push(start);
+  }
+  return slots;
+}
+
+function calendarTime(timestamp) {
+  return new Date(timestamp).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+}
+
+function calendarEvent(start, duration, now = Date.now()) {
+  return ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//StudySlot//Meeting Planner//EN',
+    'BEGIN:VEVENT', `UID:studyslot-${start}@studyslot.invalid`, `DTSTAMP:${calendarTime(now)}`,
+    `DTSTART:${calendarTime(start)}`, `DTEND:${calendarTime(start + duration * minute)}`,
+    'SUMMARY:Research team meeting', 'END:VEVENT', 'END:VCALENDAR', ''].join('\r\n');
+}
+
+
+const form = document.querySelector('#planner');
+const participants = document.querySelector('#participants');
+const rows = document.querySelector('#slots');
+const summary = document.querySelector('#summary');
+const error = document.querySelector('#error');
+const add = document.querySelector('#add');
+const zoneList = ['UTC', ...Intl.supportedValuesOf('timeZone')];
+const template = document.querySelector('#participant');
+
+function updateParticipantLabels() {
+  for (const [index, fieldset] of Array.from(participants.children).entries()) {
+    fieldset.querySelector('legend').textContent = `Participant ${index + 1}`;
+    fieldset.querySelector('.remove').hidden = participants.children.length === 2;
+  }
+  add.disabled = participants.children.length >= 5;
+}
+
+function addParticipant(zone) {
+  const fieldset = template.content.firstElementChild.cloneNode(true);
+  const select = fieldset.querySelector('select');
+  for (const tz of zoneList) select.add(new Option(tz.replaceAll('_', ' '), tz, false, tz === zone));
+  fieldset.querySelector('.remove').addEventListener('click', () => {
+    fieldset.remove();
+    updateParticipantLabels();
+    showResults();
+    add.focus();
+  });
+  participants.append(fieldset);
+  return select;
+}
+
+function showResults() {
+  const people = Array.from(participants.children, node => ({
+    zone: node.querySelector('[name="zone"]').value,
+    from: node.querySelector('[name="from"]').value,
+    until: node.querySelector('[name="until"]').value,
+  }));
+  const date = form.elements.date.value;
+  const duration = Number(form.elements.duration.value);
+  error.hidden = true;
+  rows.replaceChildren();
+  try {
+    const matches = findSlots(date, duration, people);
+    summary.textContent = matches.length ? `${matches.length} possible ${duration}-minute starts` : 'No shared times on this date.';
+    for (const start of matches) {
+      const item = document.createElement('article');
+      const h = document.createElement('h3');
+      const first = localDateTime(start, people[0].zone);
+      h.textContent = `${first.time} · ${people[0].zone.replaceAll('_', ' ')} (${first.offset})`;
+      const local = document.createElement('p');
+      local.textContent = people.slice(1).map(({ zone }) => {
+        const time = localDateTime(start, zone);
+        return `${time.time} ${zone.replaceAll('_', ' ')} (${time.offset})${time.date === first.date ? '' : ` · ${time.date}`}`;
+      }).join(' · ');
+      const link = document.createElement('a');
+      link.textContent = 'Download calendar invite';
+      link.setAttribute('aria-label', `Download calendar invite for ${first.time} ${people[0].zone} (${first.offset})`);
+      link.download = 'studyslot-meeting.ics';
+      link.href = `data:text/calendar;charset=utf-8,${encodeURIComponent(calendarEvent(start, duration))}`;
+      item.append(h, local, link);
+      rows.append(item);
+    }
+  } catch (failure) {
+    summary.textContent = 'Check meeting setup.';
+    error.textContent = failure.message;
+    error.hidden = false;
+  }
+}
+
+function clearResults() {
+  rows.replaceChildren();
+  error.hidden = true;
+  summary.textContent = 'Use Find meeting times to update the results.';
+}
+
+form.addEventListener('submit', event => {
+  event.preventDefault();
+  showResults();
+});
+form.addEventListener('input', clearResults);
+add.addEventListener('click', () => {
+  if (participants.children.length >= 5) return;
+  const newZone = addParticipant('UTC');
+  updateParticipantLabels();
+  clearResults();
+  newZone.focus();
+});
+addParticipant('Europe/Berlin');
+addParticipant('America/New_York');
+form.elements.date.value = localDateTime(Date.now(), 'Europe/Berlin').date;
+updateParticipantLabels();
+showResults();
+
+</script>
+<body>
+  <header><a href="StudySlot.html">StudySlot</a><span>Research team scheduling</span></header>
+  <main>
+    <section class="intro">
+      <h1>Find a time that<br> works for everyone.</h1>
+      <p>Compare local working hours across time zones and download a calendar invite for the time you choose.</p>
+    </section>
+    <div class="workspace">
+      <form id="planner">
+        <h2>Meeting setup</h2>
+        <div class="meeting">
+          <label>Meeting date<input type="date" name="date" required><small>In the first participant’s time zone</small></label>
+          <label>Duration<select name="duration"><option value="15">15 min</option><option selected value="30">30 min</option><option value="45">45 min</option><option value="60">60 min</option><option value="90">90 min</option></select></label>
+        </div>
+        <div id="participants"></div>
+        <div class="controls"><button type="button" class="secondary" id="add">Add time zone</button><button type="submit">Find meeting times</button></div>
+        <p id="error" role="alert" hidden></p>
+      </form>
+      <section class="results" aria-labelledby="results-heading">
+        <h2 id="results-heading">Shared meeting times</h2>
+        <p id="summary" role="status"></p>
+        <div id="slots"></div>
+      </section>
+    </div>
+  </main>
+  <template id="participant">
+    <fieldset>
+      <legend></legend>
+      <div class="participant-fields">
+        <label class="zone">Time zone<select name="zone" required></select></label>
+        <label>From<input name="from" type="time" value="09:00" required></label>
+        <label>Until<input name="until" type="time" value="17:00" required></label>
+        <button class="secondary remove" type="button">Remove</button>
+      </div>
+    </fieldset>
+  </template>
+</body>
+</html>
